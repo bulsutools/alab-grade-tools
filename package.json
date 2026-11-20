@@ -7,9 +7,11 @@
     "dev": "vite build --watch",
     "build": "vite build",
     "test": "vitest run",
-    "check": "npm run test && npm run build"
+    "check": "npm run test && npm run build",
+    "package": "npm run build && node scripts/package.mjs"
   },
   "devDependencies": {
+    "archiver": "^8.0.0",
     "jsdom": "^26.0.0",
     "vite": "^7.0.0",
     "vitest": "^3.0.0"
