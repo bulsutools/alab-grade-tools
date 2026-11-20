@@ -1,0 +1,17 @@
+{
+  "name": "alab-grades-extension",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "test": "vitest run",
+    "check": "npm run test && npm run build"
+  },
+  "devDependencies": {
+    "jsdom": "^26.0.0",
+    "vite": "^7.0.0",
+    "vitest": "^3.0.0"
+  }
+}
