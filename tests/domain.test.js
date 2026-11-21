@@ -15,8 +15,20 @@ const terms = [
     label: '2025-2026 · 1st Semester',
     rows: [
       { subject: 'COE 100 Mathematics', units: 3, grade: 2.5, gradeText: '2.50', remark: 'Passed' },
-      { subject: 'NSTP 11 National Service', units: 2, grade: 1.25, gradeText: '1.25', remark: 'Passed' },
-      { subject: 'CPE 205 Numerical Methods', units: 3, grade: 5, gradeText: '5.00', remark: 'Failed' },
+      {
+        subject: 'NSTP 11 National Service',
+        units: 2,
+        grade: 1.25,
+        gradeText: '1.25',
+        remark: 'Passed',
+      },
+      {
+        subject: 'CPE 205 Numerical Methods',
+        units: 3,
+        grade: 5,
+        gradeText: '5.00',
+        remark: 'Failed',
+      },
       { subject: 'PE 11 PATHFit 2', units: 2, grade: 1, gradeText: '1.00', remark: 'Passed' },
       { subject: 'COE 105 Physics', units: 3, grade: null, gradeText: '—', remark: 'No grade' },
     ],
@@ -61,19 +73,24 @@ describe('summaries', () => {
 
 describe('target calculation', () => {
   it('computes the average needed on remaining units', () => {
-    expect(requiredAverage({ currentGwa: 2.5, currentUnits: 10, remainingUnits: 10, target: 2 }))
-      .toEqual({ state: 'ok', value: 1.5 });
+    expect(
+      requiredAverage({ currentGwa: 2.5, currentUnits: 10, remainingUnits: 10, target: 2 }),
+    ).toEqual({ state: 'ok', value: 1.5 });
   });
 
   it('reports the boundary states', () => {
-    expect(requiredAverage({ currentGwa: 2.5, currentUnits: 10, remainingUnits: 10, target: 1 }))
-      .toEqual({ state: 'within-reach', value: -0.5 });
-    expect(requiredAverage({ currentGwa: 2.5, currentUnits: 10, remainingUnits: 10, target: 4.5 }))
-      .toEqual({ state: 'unreachable', value: 6.5 });
-    expect(requiredAverage({ currentGwa: 2.5, currentUnits: 10, remainingUnits: 0, target: 2 }).state)
-      .toBe('need-units');
-    expect(requiredAverage({ currentGwa: null, currentUnits: 0, remainingUnits: 10, target: 2 }).state)
-      .toBe('no-data');
+    expect(
+      requiredAverage({ currentGwa: 2.5, currentUnits: 10, remainingUnits: 10, target: 1 }),
+    ).toEqual({ state: 'within-reach', value: -0.5 });
+    expect(
+      requiredAverage({ currentGwa: 2.5, currentUnits: 10, remainingUnits: 10, target: 4.5 }),
+    ).toEqual({ state: 'unreachable', value: 6.5 });
+    expect(
+      requiredAverage({ currentGwa: 2.5, currentUnits: 10, remainingUnits: 0, target: 2 }).state,
+    ).toBe('need-units');
+    expect(
+      requiredAverage({ currentGwa: null, currentUnits: 0, remainingUnits: 10, target: 2 }).state,
+    ).toBe('no-data');
   });
 });
 

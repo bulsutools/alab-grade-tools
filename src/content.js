@@ -1,10 +1,4 @@
-import {
-  DEFAULT_EXCLUSIONS,
-  requiredAverage,
-  summarizeTerms,
-  toCsv,
-  toJson,
-} from './domain.js';
+import { DEFAULT_EXCLUSIONS, requiredAverage, summarizeTerms, toCsv, toJson } from './domain.js';
 import { parseGradeTables } from './parser.js';
 import { applyHighlight, createPanel, createSummary } from './ui.js';
 
@@ -100,7 +94,12 @@ function refresh() {
 function startObserver() {
   observer = new MutationObserver((mutations) => {
     if (internalMutation || updateQueued) return;
-    if (!mutations.some((mutation) => mutation.type === 'childList' || mutation.type === 'characterData')) return;
+    if (
+      !mutations.some(
+        (mutation) => mutation.type === 'childList' || mutation.type === 'characterData',
+      )
+    )
+      return;
 
     updateQueued = true;
     window.requestAnimationFrame(() => {
@@ -143,9 +142,8 @@ async function init() {
       },
       onExport(format) {
         if (!currentTerms.length) return;
-        const contents = format === 'csv'
-          ? toCsv(currentTerms)
-          : toJson(currentTerms, currentSummary);
+        const contents =
+          format === 'csv' ? toCsv(currentTerms) : toJson(currentTerms, currentSummary);
         downloadFile(contents, format);
       },
     },

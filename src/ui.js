@@ -201,7 +201,9 @@ export function createPanel({ doc, handlers }) {
 
   for (const input of refs.exclusions) {
     input.addEventListener('change', () => {
-      handlers.onExclusionsChange(refs.exclusions.filter((item) => item.checked).map((item) => item.value));
+      handlers.onExclusionsChange(
+        refs.exclusions.filter((item) => item.checked).map((item) => item.value),
+      );
     });
   }
 
@@ -212,8 +214,12 @@ export function createPanel({ doc, handlers }) {
     refs.filter.focus();
   });
 
-  element.querySelector('[data-action="export-csv"]').addEventListener('click', () => handlers.onExport('csv'));
-  element.querySelector('[data-action="export-json"]').addEventListener('click', () => handlers.onExport('json'));
+  element
+    .querySelector('[data-action="export-csv"]')
+    .addEventListener('click', () => handlers.onExport('csv'));
+  element
+    .querySelector('[data-action="export-json"]')
+    .addEventListener('click', () => handlers.onExport('json'));
 
   doc.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !element.hidden) close();
@@ -240,7 +246,8 @@ export function createPanel({ doc, handlers }) {
     },
     setHighlightCount(count, query) {
       if (!normalizeText(query)) {
-        refs.highlightCount.textContent = 'Type a subject code or title to highlight matching rows.';
+        refs.highlightCount.textContent =
+          'Type a subject code or title to highlight matching rows.';
       } else if (count > 0) {
         refs.highlightCount.textContent = `${count} matching ${count === 1 ? 'row' : 'rows'}.`;
       } else {

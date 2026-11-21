@@ -6,7 +6,9 @@ const REQUIRED_HEADERS = ['subject', 'units', 'grade'];
 function headerText(table) {
   const firstRow = table.querySelector('tr');
   if (!firstRow) return [];
-  return Array.from(firstRow.querySelectorAll('th')).map((cell) => normalizeText(cell.textContent).toLowerCase());
+  return Array.from(firstRow.querySelectorAll('th')).map((cell) =>
+    normalizeText(cell.textContent).toLowerCase(),
+  );
 }
 
 export function isGradeTable(table) {
@@ -55,9 +57,6 @@ export function parseGradeTables(root) {
   const tables = Array.from(root.querySelectorAll('table')).filter(isGradeTable);
   return tables.map((table) => ({
     label: findTermLabel(table),
-    rows: Array.from(table.querySelectorAll('tr'))
-      .slice(1)
-      .map(parseRow)
-      .filter(Boolean),
+    rows: Array.from(table.querySelectorAll('tr')).slice(1).map(parseRow).filter(Boolean),
   }));
 }

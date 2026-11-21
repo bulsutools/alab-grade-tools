@@ -3,7 +3,9 @@ export const DEFAULT_EXCLUSIONS = ['NSTP', 'PE'];
 const NO_GRADE_MARKS = new Set(['—', '–', '-', '', 'n/a', 'na', 'none']);
 
 export function normalizeText(value) {
-  return String(value ?? '').replace(/\s+/g, ' ').trim();
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export function round2(value) {

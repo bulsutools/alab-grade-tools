@@ -46,7 +46,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.alab-grade-summary [data-role="gwa"] {
+.alab-grade-summary [data-role='gwa'] {
   font-size: 1.5rem;
 }
 
