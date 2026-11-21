@@ -1,4 +1,4 @@
-import { createWriteStream, existsSync, mkdirSync } from 'node:fs';
+import { copyFileSync, createWriteStream, existsSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,11 +15,14 @@ if (!existsSync(dist)) {
 mkdirSync(outputDir, { recursive: true });
 
 const outputPath = join(outputDir, 'alab-grade-tools.zip');
+const xpiPath = join(outputDir, 'alab-grade-tools.xpi');
 const output = createWriteStream(outputPath);
 const archive = new ZipArchive({ zlib: { level: 9 } });
 
 output.on('close', () => {
+  copyFileSync(outputPath, xpiPath);
   console.log(`${outputPath} (${archive.pointer()} bytes)`);
+  console.log(`${xpiPath} (${archive.pointer()} bytes)`);
 });
 
 archive.on('error', (error) => {

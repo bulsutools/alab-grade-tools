@@ -76,6 +76,8 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: alab-grade-tools
-          path: package/alab-grade-tools.zip
+          path: |
+            package/alab-grade-tools.zip
+            package/alab-grade-tools.xpi
           if-no-files-found: error
           retention-days: 14
