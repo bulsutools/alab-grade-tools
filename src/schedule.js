@@ -1,19 +1,58 @@
-// Schedule export payload for downstream consumers (Room TBA, class hubs).
-// Pure module: no DOM, no chrome.* — also runs under node for tests.
-// Contract: docs/schedule-payload.md. Grades are never part of this payload.
+// Schedule export payload, the canonical contract shared with Room TBA
+// (bulsutools/room-tba#16; receiver spec: docs/alab-schedule-bridge.md and
+// docs/alab-schedule-payload.v1.schema.json in bulsutools/room-tba).
+// Pure module: no DOM, no chrome.*; also runs under node for tests.
+// Grades are never part of this payload, and no student identity leaves
+// this module inside the payload (the student number is used only to
+// compute the contribution envelope's studentHash).
+
+import { BRIDGE_SECRET, STUDENT_HASH_SALT } from './bridge-config.js';
 
 export const SCHEDULE_PAYLOAD_VERSION = 1;
-export const SIGNING_KEY_ID = 'alab-schedule-v1';
-export const SIGNATURE_TTL_MS = 24 * 60 * 60 * 1000;
+export const ENVELOPE_VERSION = 1;
+export const SIGNATURE_DOMAIN = 'alab-schedule-v1';
+export const ENVELOPE_TTL_SECONDS = 24 * 60 * 60;
+// Mirrors the receiver's max-future-skew + TTL bound (signature.ts).
+export const ENVELOPE_MAX_FUTURE_SKEW_SECONDS = 5 * 60;
 export const ROOM_TBA_URL = 'https://room-tba.bulsu.tools/';
 
-// App-level HMAC key shared with consumers (Room TBA). Public by design: it
-// proves the payload came from a build of this extension and is fresh, not
-// that the student is who they claim (see room-tba#16).
-const SIGNING_KEY_B64 = 'B5cQtdDeLPDLQ7kvFFCGoFEk/w2oigSrnDHe8y2eBuI=';
-
-// Raw ALAB SMS meeting.mode -> compact type consumers already understand.
+// Raw ALAB SMS meeting.mode -> compact component type. One classes[] entry
+// is one section component (LEC/LAB/SEM); unknown modes pass through
+// uppercased so receivers still get a usable string.
 const MODE_TYPE = { lecture: 'LEC', laboratory: 'LAB', recitation: 'SEM', seminar: 'SEM' };
+
+// ALAB SMS academic_term.term_number -> Room TBA terms.semester
+// ('1' | '2' | 'midyear' per room-tba drizzle migrations).
+const TERM_SEMESTER = { 1: '1', 2: '2', 3: 'midyear' };
+
+// ALAB SMS meeting.weekday -> canonical compact day. The receiver also
+// accepts full English names; we emit the compact form.
+const WEEKDAY = {
+  m: 'M',
+  mon: 'M',
+  monday: 'M',
+  t: 'T',
+  tue: 'T',
+  tues: 'T',
+  tuesday: 'T',
+  w: 'W',
+  wed: 'W',
+  wednesday: 'W',
+  th: 'Th',
+  thu: 'Th',
+  thur: 'Th',
+  thurs: 'Th',
+  thursday: 'Th',
+  f: 'F',
+  fri: 'F',
+  friday: 'F',
+  s: 'S',
+  sat: 'S',
+  saturday: 'S',
+  su: 'Su',
+  sun: 'Su',
+  sunday: 'Su',
+};
 
 export function normalizeText(value) {
   return String(value ?? '')
@@ -29,12 +68,6 @@ function firstString(...values) {
   return '';
 }
 
-function toUnitCount(value) {
-  if (value === null || value === undefined || value === '') return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
-}
-
 function pick(obj, path) {
   let node = obj;
   for (const key of path) {
@@ -44,10 +77,38 @@ function pick(obj, path) {
   return node;
 }
 
-// /enrollment/me -> { term, student, classes }. Returns null when the
-// response has no registration subjects. Schedule fields only. `studentHint`
-// supplies student_no/full_name when the enrollment payload omits them
-// (e.g. read from /students/me/grades — grades themselves are discarded).
+function normalizeWeekday(value) {
+  const text = normalizeText(value).toLowerCase();
+  return WEEKDAY[text] ?? null;
+}
+
+// "HH:MM" or "HH:MM:SS" -> "H:MM"/"HH:MM" 24-hour, or null when invalid.
+function normalizeTime(value) {
+  const match = /^(\d{1,2}):(\d{2})/.exec(normalizeText(value));
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return null;
+  return `${match[1]}:${match[2]}`;
+}
+
+function timeMinutes(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function compactType(mode) {
+  const raw = normalizeText(mode);
+  return MODE_TYPE[raw.toLowerCase()] ?? raw.toUpperCase().slice(0, 12);
+}
+
+// /enrollment/me -> { term, student, classes }. `classes` are already
+// canonical payload v1 entries grouped one-per-component-type.
+// `student` stays inside this module's return value only; it is never
+// copied into the payload; it feeds the contribution envelope's studentHash.
+// `studentHint` supplies student_no/full_name when the enrollment payload
+// omits them (e.g. read from /students/me/grades; grades themselves are
+// discarded).
 export function slimEnrollment(data, studentHint = {}) {
   const reg = pick(data, ['registration']) ?? pick(data, ['data', 'registration']);
   if (!reg || !Array.isArray(reg.subjects)) return null;
@@ -63,32 +124,55 @@ export function slimEnrollment(data, studentHint = {}) {
     const code = normalizeText(subject.code);
     if (!code) continue;
 
-    const meetings = Array.isArray(offering && offering.meetings) ? offering.meetings : [];
-    const types = [...new Set(meetings.map((m) => MODE_TYPE[m && m.mode] || '').filter(Boolean))];
+    const section = normalizeText(offering && offering.section && offering.section.name);
+    const professor = normalizeText(offering && offering.faculty && offering.faculty.full_name);
+    const title = normalizeText(subject.title);
+    const rawMeetings = Array.isArray(offering && offering.meetings) ? offering.meetings : [];
 
-    classes.push({
-      courseCode: code,
-      title: normalizeText(subject.title),
-      units: toUnitCount(s.units ?? subject.units),
-      section: normalizeText(offering && offering.section && offering.section.name),
-      sectionTypes: types,
-      faculty: normalizeText(offering && offering.faculty && offering.faculty.full_name),
-      meetings: meetings.map((m) => ({
-        weekday: normalizeText(m && m.weekday),
-        startTime: normalizeText(m && m.start_time),
-        endTime: normalizeText(m && m.end_time),
-        mode: normalizeText(m && m.mode),
-        type: MODE_TYPE[m && m.mode] || '',
+    // Group meetings by compact component type: one classes[] entry per
+    // LEC/LAB/SEM component of the section, per the receiver contract.
+    const byType = new Map();
+    for (const m of rawMeetings) {
+      const weekday = normalizeWeekday(m && m.weekday);
+      const startTime = normalizeTime(m && m.start_time);
+      const endTime = normalizeTime(m && m.end_time);
+      if (!weekday || !startTime || !endTime) continue;
+      // Receiver drops meetings whose end is not after start; skip them here.
+      if (timeMinutes(endTime) <= timeMinutes(startTime)) continue;
+
+      const type = compactType(m && m.mode);
+      if (!type) continue;
+      const room =
+        m && m.room && normalizeText(m.room.code)
+          ? {
+              code: normalizeText(m.room.code),
+              ...(normalizeText(m.room.name) ? { name: normalizeText(m.room.name) } : {}),
+            }
+          : null;
+      const meeting = {
+        weekday,
+        startTime,
+        endTime,
+        mode: type,
         isOnline: !!(m && m.is_online),
-        room:
-          m && m.room
-            ? {
-                code: normalizeText(m.room.code),
-                name: normalizeText(m.room.name),
-              }
-            : null,
-      })),
-    });
+        room,
+      };
+      if (!byType.has(type)) byType.set(type, []);
+      byType.get(type).push(meeting);
+    }
+
+    for (const [type, meetings] of byType) {
+      if (!meetings.length) continue;
+      classes.push({
+        courseCode: code,
+        ...(title ? { courseTitle: title } : {}),
+        section,
+        type,
+        ...(professor ? { professor } : {}),
+        isOnline: meetings.every((m) => m.isOnline),
+        meetings,
+      });
+    }
   }
 
   return {
@@ -111,37 +195,47 @@ export function slimEnrollment(data, studentHint = {}) {
   };
 }
 
-// Versioned, consumer-agnostic payload. `signature` is added by
-// signSchedulePayload; pass sign: false to skip it.
+// Versioned payload v1: the exact shape Room TBA's parseAlabSchedulePayload
+// accepts. No student block, no signature block, no units/faculty fields.
 export function buildSchedulePayload(slim, options = {}) {
-  const generatedAt = options.generatedAt ?? new Date().toISOString();
+  const exportedAt = options.exportedAt ?? options.generatedAt ?? new Date().toISOString();
   const label = [slim.term.term, slim.term.academicYear && `AY ${slim.term.academicYear}`]
     .filter(Boolean)
     .join(' ');
+  const semester =
+    TERM_SEMESTER[slim.term.termNumber] ??
+    (Number.isInteger(slim.term.termNumber) && slim.term.termNumber > 0
+      ? String(slim.term.termNumber)
+      : null);
+
+  const term = {};
+  if (label) term.label = label;
+  if (slim.term.academicYear) term.schoolYear = slim.term.academicYear;
+  if (semester) term.semester = semester;
 
   return {
-    v: SCHEDULE_PAYLOAD_VERSION,
+    schemaVersion: SCHEDULE_PAYLOAD_VERSION,
     source: 'alab-grade-tools',
-    generatedAt,
-    term: {
-      label,
-      term: slim.term.term || null,
-      academicYear: slim.term.academicYear || null,
-      termNumber: slim.term.termNumber,
-    },
-    student: {
-      number: slim.student.number || null,
-      name: slim.student.name || null,
-    },
+    exportedAt,
+    ...(Object.keys(term).length ? { term } : {}),
     classes: slim.classes,
-    signature: null,
   };
 }
 
-/* ---------- HMAC signature (use case B: dataset contribution) ---------- */
+/* ---------- Contribution envelope (use case B: dataset contribution) ---------- */
+// Contract: bulsutools/room-tba docs/alab-schedule-bridge.md "Signed
+// contribution envelope". Envelope =
+//   { v:1, studentHash, exp, nonce, payload: <base64url payload JSON>, sig }
+//   sig = base64url HMAC-SHA256(secret, "alab-schedule-v1\n" + studentHash
+//         + "\n" + exp + "\n" + nonce + "\n" + payload)
+// studentHash = base64url SHA-256(student_number + STUDENT_HASH_SALT).
+// Receivers dedupe on the mapping key (courseCode|section|type|roomCode),
+// not on any exporter-computed ID list.
 
+// Accepts base64 or base64url (sig is base64url).
 function base64ToBytes(b64) {
-  const bin = atob(b64);
+  const std = b64.replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(std + '='.repeat((4 - (std.length % 4)) % 4));
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return bytes;
@@ -172,82 +266,91 @@ function randomNonce() {
   return bytesToBase64Url(bytes);
 }
 
-// Section IDs are "<courseCode>|<section>" per class, sorted for stability.
-export function scheduleSectionIds(payload) {
-  return (payload.classes || []).map((c) => `${c.courseCode}|${c.section || ''}`).sort();
+async function sha256Base64Url(text) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return bytesToBase64Url(new Uint8Array(digest));
 }
 
-// Canonical signed string: version, student number, section IDs, expiry, nonce.
-// Documented in docs/schedule-payload.md — keep both in sync.
-export function signatureMessage({ studentNumber, sectionIds, expiresAt, nonce }) {
-  return [
-    SIGNING_KEY_ID,
-    studentNumber ?? '',
-    (sectionIds || []).join(','),
-    String(expiresAt),
-    nonce ?? '',
-  ].join('\n');
+export async function computeStudentHash(studentNumber) {
+  return sha256Base64Url(`${normalizeText(studentNumber)}${STUDENT_HASH_SALT}`);
 }
 
-async function hmacKey() {
+// Canonical signing string. Keep in sync with room-tba signature.ts
+// (alabSigningString). Documented in docs/schedule-payload.md.
+export function envelopeSigningString({ studentHash, exp, nonce, payload }) {
+  return [SIGNATURE_DOMAIN, studentHash, String(exp), nonce, payload].join('\n');
+}
+
+// The receiver HMACs with the secret env string directly (UTF-8 bytes), so
+// the key material here is the string itself, not a base64 decode.
+async function hmacKey(secret = BRIDGE_SECRET) {
   return crypto.subtle.importKey(
     'raw',
-    base64ToBytes(SIGNING_KEY_B64),
+    new TextEncoder().encode(secret),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign', 'verify'],
   );
 }
 
-// Adds payload.signature in place and returns the payload. `expiresAt` is a
-// unix-ms timestamp; defaults to now + SIGNATURE_TTL_MS.
-export async function signSchedulePayload(payload, options = {}) {
-  const studentNumber = payload.student?.number ?? '';
-  const sectionIds = scheduleSectionIds(payload);
-  const expiresAt = options.expiresAt ?? Date.now() + SIGNATURE_TTL_MS;
+// Builds the POST body for /api/contributions/alab-schedule. `payload` is the
+// object from buildSchedulePayload; it is serialized compactly and base64url
+// encoded; receivers verify the signature over those exact bytes and never
+// re-serialize. `exp` is unix seconds; defaults to now + ENVELOPE_TTL_SECONDS.
+export async function buildContributionEnvelope(payload, options = {}) {
+  const studentNumber = options.studentNumber ?? '';
+  const nowSeconds = Math.floor((options.now ?? Date.now()) / 1000);
+  const ttl = options.ttlSeconds ?? ENVELOPE_TTL_SECONDS;
   const nonce = options.nonce ?? randomNonce();
-  const message = signatureMessage({ studentNumber, sectionIds, expiresAt, nonce });
 
+  const body = {
+    v: ENVELOPE_VERSION,
+    studentHash: await computeStudentHash(studentNumber),
+    exp: nowSeconds + ttl,
+    nonce,
+    payload: bytesToBase64UrlString(schedulePayloadJson(payload, false)),
+  };
   const signature = await crypto.subtle.sign(
     'HMAC',
-    await hmacKey(),
-    new TextEncoder().encode(message),
+    await hmacKey(options.secret),
+    new TextEncoder().encode(envelopeSigningString(body)),
   );
-
-  payload.signature = {
-    alg: 'HMAC-SHA256',
-    kid: SIGNING_KEY_ID,
-    value: bytesToBase64Url(new Uint8Array(signature)),
-    expiresAt,
-    nonce,
-    sectionIds,
-  };
-  return payload;
+  return { ...body, sig: bytesToBase64Url(new Uint8Array(signature)) };
 }
 
-// Verifies payload.signature against the documented canonical string.
-// Consumers (Room TBA) reimplement this server-side; exported for tests/docs.
-export async function verifyScheduleSignature(payload, keyB64 = SIGNING_KEY_B64) {
-  const sig = payload && payload.signature;
-  if (!sig || sig.alg !== 'HMAC-SHA256' || sig.kid !== SIGNING_KEY_ID) return false;
-  const message = signatureMessage({
-    studentNumber: payload.student?.number ?? '',
-    sectionIds: sig.sectionIds ?? [],
-    expiresAt: sig.expiresAt,
-    nonce: sig.nonce,
-  });
-  const key = await crypto.subtle.importKey(
-    'raw',
-    base64ToBytes(keyB64),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['verify'],
-  );
-  const padded = sig.value.replace(/-/g, '+').replace(/_/g, '/');
-  const bin = atob(padded + '='.repeat((4 - (padded.length % 4)) % 4));
-  const sigArr = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) sigArr[i] = bin.charCodeAt(i);
-  return crypto.subtle.verify('HMAC', key, sigArr, new TextEncoder().encode(message));
+// Exporter-side self-check mirroring the receiver's
+// verifyAlabEnvelopeSignature: signature, expiry, and far-future bound.
+// Receivers additionally enforce nonce replay and rate limits.
+export async function verifyContributionEnvelope(envelope, options = {}) {
+  if (!envelope || envelope.v !== ENVELOPE_VERSION) return false;
+  const { studentHash, exp, nonce, payload, sig } = envelope;
+  if (
+    typeof studentHash !== 'string' ||
+    !Number.isInteger(exp) ||
+    typeof nonce !== 'string' ||
+    typeof payload !== 'string' ||
+    typeof sig !== 'string'
+  ) {
+    return false;
+  }
+  let ok;
+  try {
+    ok = await crypto.subtle.verify(
+      'HMAC',
+      await hmacKey(options.secret),
+      base64ToBytes(sig),
+      new TextEncoder().encode(envelopeSigningString({ studentHash, exp, nonce, payload })),
+    );
+  } catch {
+    return false;
+  }
+  if (!ok) return false;
+  const nowSeconds = Math.floor((options.now ?? Date.now()) / 1000);
+  if (exp <= nowSeconds) return false;
+  if (exp > nowSeconds + ENVELOPE_MAX_FUTURE_SKEW_SECONDS + ENVELOPE_TTL_SECONDS) {
+    return false;
+  }
+  return true;
 }
 
 /* ---------- Serialization: clipboard, download, URL fragment ---------- */

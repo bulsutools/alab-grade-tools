@@ -5,7 +5,6 @@ import {
   buildSchedulePayload,
   roomTbaScheduleUrl,
   schedulePayloadJson,
-  signSchedulePayload,
   slimEnrollment,
 } from './schedule.js';
 import { applyHighlight, createPanel, createSummary } from './ui.js';
@@ -120,12 +119,10 @@ async function loadSchedule() {
   }
 }
 
-// Builds a fresh signed payload on each export so expiry/nonce stay current.
-async function schedulePayload() {
+// Builds a fresh payload on each export so exportedAt stays current.
+function schedulePayload() {
   if (!scheduleSlim) return null;
-  const payload = buildSchedulePayload(scheduleSlim);
-  if (payload.student.number) await signSchedulePayload(payload);
-  return payload;
+  return buildSchedulePayload(scheduleSlim);
 }
 
 async function copyText(text) {
@@ -160,7 +157,7 @@ async function onScheduleAction(action) {
     await loadSchedule();
     return;
   }
-  const payload = await schedulePayload();
+  const payload = schedulePayload();
   if (!payload) {
     scheduleNote('Load the schedule first.');
     return;

@@ -1,12 +1,18 @@
 # Schedule payload contract
 
 Versioned JSON payload exported by ALAB Grade Tools for downstream consumers:
-Room TBA (`room-tba#16`), per-section class hubs, planners. Schedule fields
-only. **Grades are never included**, by design and by construction: the
-payload is built from `GET /enrollment/me` only. `/students/me/grades` may be
-read once to recover `student.number` when the enrollment payload omits it;
-the grades in that response are discarded in memory and never stored or
-exported.
+Room TBA (`bulsutools/room-tba#16`), per-section class hubs, planners.
+Schedule fields only. **Grades are never included**, by design and by
+construction: the payload is built from `GET /enrollment/me` only.
+`/students/me/grades` may be read once to recover `student.number` when the
+enrollment payload omits it; the grades in that response are discarded in
+memory and never stored or exported.
+
+The canonical contract lives in the receiver repo:
+`bulsutools/room-tba` → `docs/alab-schedule-bridge.md` and
+`docs/alab-schedule-payload.v1.schema.json` (copied verbatim to
+`docs/schedule-payload.schema.json` here). This file summarizes what this
+exporter emits; when in doubt, the receiver doc wins.
 
 Source endpoint: `https://alabsms-server.bulsu.edu.ph/api/v1/enrollment/me`,
 authenticated with the same `POST /auth/refresh` → `accessToken` flow used by
@@ -16,68 +22,71 @@ ALAB GradeSim. Recon (room-tba#16 comments) confirmed ALAB SMS exposes
 present. If a deployment omits rooms, `room` is `null` and consumers degrade
 to section + time only.
 
-## Payload shape (`v: 1`)
+## Payload v1
 
 ```json
 {
-  "v": 1,
+  "schemaVersion": 1,
   "source": "alab-grade-tools",
-  "generatedAt": "2026-11-22T12:00:00.000Z",
+  "exportedAt": "2026-11-22T12:00:00.000Z",
   "term": {
     "label": "2nd Semester AY 2026-2027",
-    "term": "2nd Semester",
-    "academicYear": "2026-2027",
-    "termNumber": 2
-  },
-  "student": {
-    "number": "2024104115",
-    "name": "Santos, John Carlo"
+    "schoolYear": "2026-2027",
+    "semester": "2"
   },
   "classes": [
     {
       "courseCode": "CPE 307",
-      "title": "OHSP",
-      "units": 3,
+      "courseTitle": "OHSP",
       "section": "CPE 3C",
-      "sectionTypes": ["LEC"],
-      "faculty": "Jimenez, Monaliza S.",
+      "type": "LEC",
+      "professor": "Jimenez, Monaliza S.",
+      "isOnline": false,
       "meetings": [
         {
-          "weekday": "Mon",
+          "weekday": "M",
           "startTime": "14:00",
           "endTime": "17:00",
-          "mode": "lecture",
-          "type": "LEC",
+          "mode": "LEC",
           "isOnline": false,
           "room": { "code": "NH-509*", "name": "NH 509*" }
         }
       ]
     }
-  ],
-  "signature": null
+  ]
 }
 ```
 
 Field notes:
 
-- `term.termNumber`: 1 = 1st semester, 2 = 2nd semester, 3 = summer/midyear,
-  matching ALAB SMS `academic_term.term_number`. `null` when absent.
-- `sectionTypes`: deduped compact types derived from meeting modes:
-  `lecture` → `LEC`, `laboratory` → `LAB`, `recitation`/`seminar` → `SEM`.
-  Matches the `enlisted` refs ALAB GradeSim already sends Room TBA's planner.
-- `meetings[].mode`: raw ALAB SMS mode string (`lecture`, `laboratory`,
-  `recitation`, `seminar`, others pass through). `meetings[].type` is the
-  compact form; `meetings[].room` is `null` for online or unassigned meetings.
-- `meetings[].startTime`/`endTime`: ALAB SMS `HH:MM` 24-hour strings, kept
-  verbatim. `meetings[].weekday`: short weekday string as returned (`Mon`,
-  `Wed`, ...). Consumers should treat both as opaque until the receiving side
-  (room-tba#16) pins the normalization rules.
-- `student.number`/`student.name`: `null` when ALAB SMS does not expose them.
-  Without a student number the payload is unsigned.
-- `signature`: `null` or the HMAC block below. Personal-view consumers can
-  ignore it; dataset contributors need it.
+- `schemaVersion` is the number `1`. Receivers reject unknown versions.
+- `term.id` is omitted: ALAB SMS does not expose the Room TBA `terms.id`, so
+  receivers resolve the term from `schoolYear` + `semester` (or `label`).
+  `semester` maps ALAB `academic_term.term_number`: 1 → `"1"`, 2 → `"2"`,
+  3 → `"midyear"`, matching Room TBA's `terms.semester` values.
+- One `classes[]` entry is one section component. Meetings are grouped by
+  compact type (`lecture` → `LEC`, `laboratory` → `LAB`,
+  `recitation`/`seminar` → `SEM`), so a section meeting as both lecture and
+  recitation produces two entries. `meetings[].mode` carries the same
+  compact type; unrecognized ALAB modes pass through uppercased (max 12
+  chars) rather than being dropped.
+- `meetings[].weekday` is emitted in the receiver's compact set
+  (`M T W Th F S Su`) regardless of ALAB's raw strings (`Mon`, `wed`,
+  `Wednesday`, ...). Meetings with an unparseable weekday, invalid time, or
+  `endTime <= startTime` are dropped at export; a component left with zero
+  meetings produces no entry.
+- `meetings[].startTime`/`endTime` are 24-hour `HH:MM` (seconds stripped).
+  `meetings[].room` is `null` when ALAB reports no room code; `name` is
+  omitted when empty.
+- `professor` is ALAB `class_offering.faculty.full_name`; `isOnline` on a
+  class entry is true only when every meeting is online.
+- **No student identity in the payload.** No `student` block, no grades,
+  no `units`/`sectionTypes`/`faculty` aggregates, and no `signature` block.
+  The student number is used only to compute the contribution envelope's
+  `studentHash` (below).
 
-A JSON Schema for validation lives at `docs/schedule-payload.schema.json`.
+Reference implementation: `slimEnrollment` / `buildSchedulePayload` in
+`src/schedule.js`. Tests: `tests/schedule.test.js`.
 
 ## URL fragment transport (personal "my classes" view)
 
@@ -88,55 +97,58 @@ https://room-tba.bulsu.tools/#schedule=<base64url>
 ```
 
 `<base64url>` is the compact JSON payload (no whitespace) encoded as
-base64url. The fragment never reaches a server, so nothing is published and
-no auth is needed. The receiving side (room-tba#16) parses
-`location.hash` for `schedule=` and renders the personal view client-side.
-Room TBA should treat unsigned or expired payloads as personal-view only;
-only signed payloads feed dataset contribution.
+base64url, the same bytes `scheduleFragment()` produces. The fragment never
+reaches a server, so nothing is published and no auth is needed. The
+receiving side parses `location.hash` for `schedule=` and renders the
+personal view client-side. Receivers treat every fragment payload as
+personal-view data; only signed envelopes feed dataset contribution.
 
-## HMAC signature (dataset contribution, use case B)
+## Contribution envelope (dataset contribution, use case B)
 
-`signature` is present only when `student.number` is known. It proves the
-payload came from a build of this extension and is fresh; per room-tba#16 it
-does **not** prove enrollment, because the signing key ships inside the
-extension and student numbers are not secret.
+`POST https://room-tba.bulsu.tools/api/contributions/alab-schedule` accepts:
 
 ```json
 {
-  "alg": "HMAC-SHA256",
-  "kid": "alab-schedule-v1",
-  "value": "<base64url HMAC-SHA256>",
-  "expiresAt": 1735689600000,
-  "nonce": "<base64url 16 random bytes>",
-  "sectionIds": ["CPE 307|CPE 3C", "CPE 312L|CPE 3C"]
+  "v": 1,
+  "studentHash": "<base64url>",
+  "exp": 1730000000,
+  "nonce": "<random>",
+  "payload": "<base64url of the payload JSON above>",
+  "sig": "<base64url HMAC-SHA256>"
 }
 ```
 
-- `expiresAt`: unix-ms timestamp. Default TTL is 24 hours
-  (`SIGNATURE_TTL_MS` in `src/schedule.js`). Receivers should reject expired
-  signatures.
-- `nonce`: 16 random bytes, base64url. Receivers dedupe on it.
-- `sectionIds`: one `"<courseCode>|<section>"` per class (empty section
-  yields a trailing `|`), sorted lexicographically. Receivers should
-  recompute the IDs from `classes` and compare with `signature.sectionIds`
-  so meeting details cannot be swapped under a valid signature.
+- `payload` is the base64url encoding of the exact compact payload JSON
+  bytes. The signature covers that string, so receivers never re-serialize
+  JSON.
+- `sig = base64url HMAC-SHA256(ALB_BRIDGE_SECRET,
+"alab-schedule-v1\n" + studentHash + "\n" + exp + "\n" + nonce + "\n" +
+payload)`. `exp` is a unix-seconds timestamp; the exporter sets it to
+  now + 24h (`ENVELOPE_TTL_SECONDS`). Receivers reject expired envelopes,
+  replayed nonces, and expiry more than 5 minutes of clock skew plus the
+  TTL in the future.
+- `studentHash = base64url SHA-256(student_number + STUDENT_HASH_SALT)`
+  computed by the exporter. Room TBA stores only this hash, for rate
+  limiting and audit, and never a raw student number. The hash is inside
+  the signature, so it cannot be swapped without the bridge secret.
+- What the HMAC proves: the submission came from a holder of the bridge
+  secret (an extension build) and is fresh. It does **not** prove
+  enrollment; student numbers are not secrets. Reviewers treat every
+  contribution as unverified volunteer data.
+- Receivers dedupe on the mapping key
+  `(courseCode, section, type, roomCode)` normalized; there is no
+  exporter-computed signature section list to recompute or verify.
 
-Canonical signed string (UTF-8, fields joined by `\n`):
+Both `ALB_BRIDGE_SECRET` and `STUDENT_HASH_SALT` are build-time constants in
+`src/bridge-config.js`. The extension is public, so both are extractable by
+anyone who reads the bundle; per the receiver doc they provide origin and
+freshness signaling only, not access control. `BRIDGE_SECRET` must match
+Room TBA's `ALAB_BRIDGE_SECRET` env var byte for byte: the receiver passes
+the env string straight to `createHmac`, so the HMAC key is the UTF-8 bytes
+of the string, not a base64 decode. Rotation means bumping the signature
+domain (`alab-schedule-v2`) and shipping new constants on both sides.
 
-```
-alab-schedule-v1
-<student.number or "">
-<sectionIds joined by ",">
-<expiresAt as decimal integer>
-<nonce>
-```
-
-HMAC key: SHA-256 HMAC with the raw 32-byte key, base64-encoded as
-`B5cQtdDeLPDLQ7kvFFCGoFEk/w2oigSrnDHe8y2eBuI=` (constant `SIGNING_KEY_B64`
-in `src/schedule.js`). The same key must be configured on the Room TBA side;
-rotation means bumping `kid` to `alab-schedule-v2` and shipping a new key in
-both repos.
-
-Reference implementation: `signSchedulePayload` /
-`verifyScheduleSignature` in `src/schedule.js`. Dedup key for dataset
-building remains `(courseCode, section, room.code)` per room-tba#16.
+Reference implementation: `buildContributionEnvelope` /
+`verifyContributionEnvelope` (exporter-side self-check mirroring the
+receiver's `verifyAlabEnvelopeSignature`) / `envelopeSigningString` in
+`src/schedule.js`.
