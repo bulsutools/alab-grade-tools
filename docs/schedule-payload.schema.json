@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://room-tba.bulsu.tools/schemas/schedule-payload.v1.json",
+  "title": "ALAB Grade Tools schedule payload",
+  "description": "Versioned schedule export from ALAB Grade Tools. Schedule fields only; grades are never included. See docs/schedule-payload.md.",
+  "type": "object",
+  "required": ["v", "source", "generatedAt", "term", "student", "classes", "signature"],
+  "additionalProperties": false,
+  "properties": {
+    "v": { "const": 1 },
+    "source": { "const": "alab-grade-tools" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "term": {
+      "type": "object",
+      "required": ["label", "term", "academicYear", "termNumber"],
+      "additionalProperties": false,
+      "properties": {
+        "label": { "type": "string" },
+        "term": { "type": ["string", "null"] },
+        "academicYear": { "type": ["string", "null"] },
+        "termNumber": { "type": ["integer", "null"], "enum": [1, 2, 3, null] }
+      }
+    },
+    "student": {
+      "type": "object",
+      "required": ["number", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "number": { "type": ["string", "null"] },
+        "name": { "type": ["string", "null"] }
+      }
+    },
+    "classes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "courseCode",
+          "title",
+          "units",
+          "section",
+          "sectionTypes",
+          "faculty",
+          "meetings"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "courseCode": { "type": "string", "minLength": 1 },
+          "title": { "type": "string" },
+          "units": { "type": ["number", "null"] },
+          "section": { "type": "string" },
+          "sectionTypes": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["LEC", "LAB", "SEM"] }
+          },
+          "faculty": { "type": "string" },
+          "meetings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["weekday", "startTime", "endTime", "mode", "type", "isOnline", "room"],
+              "additionalProperties": false,
+              "properties": {
+                "weekday": { "type": "string" },
+                "startTime": { "type": "string" },
+                "endTime": { "type": "string" },
+                "mode": { "type": "string" },
+                "type": { "type": "string", "enum": ["LEC", "LAB", "SEM", ""] },
+                "isOnline": { "type": "boolean" },
+                "room": {
+                  "type": ["object", "null"],
+                  "required": ["code", "name"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": { "type": "string" },
+                    "name": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "signature": {
+      "type": ["object", "null"],
+      "required": ["alg", "kid", "value", "expiresAt", "nonce", "sectionIds"],
+      "additionalProperties": false,
+      "properties": {
+        "alg": { "const": "HMAC-SHA256" },
+        "kid": { "const": "alab-schedule-v1" },
+        "value": { "type": "string" },
+        "expiresAt": { "type": "integer" },
+        "nonce": { "type": "string" },
+        "sectionIds": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

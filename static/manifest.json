@@ -2,8 +2,9 @@
   "manifest_version": 3,
   "name": "ALAB Grade Tools",
   "version": "0.1.0",
-  "description": "Adds weighted GWA, a term breakdown, subject search, and CSV or JSON export to the ALAB SMS grades page.",
+  "description": "Adds weighted GWA, a term breakdown, subject search, class schedule export, and CSV or JSON export to the ALAB SMS grades page.",
   "permissions": ["storage"],
+  "host_permissions": ["https://alabsms-server.bulsu.edu.ph/*"],
   "content_scripts": [
     {
       "matches": ["https://alabsms.bulsu.edu.ph/grades*"],

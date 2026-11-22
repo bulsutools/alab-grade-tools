@@ -69,6 +69,19 @@ const PANEL_TEMPLATE = `
         <button type="button" class="agp-btn agp-btn--secondary" data-action="export-json">Download JSON</button>
       </div>
     </section>
+
+    <section class="agp-section">
+      <h3>Class schedule</h3>
+      <p class="agp-note" data-role="schedule-status">Reading your enrollment from ALAB SMS…</p>
+      <div class="agp-inline">
+        <button type="button" class="agp-btn agp-btn--secondary" data-action="schedule-refresh">Refresh</button>
+        <button type="button" class="agp-btn agp-btn--secondary" data-action="schedule-copy">Copy JSON</button>
+        <button type="button" class="agp-btn agp-btn--secondary" data-action="schedule-download">Download JSON</button>
+        <button type="button" class="agp-btn agp-btn--primary" data-action="schedule-roomtba">Send to Room TBA</button>
+      </div>
+      <p class="agp-note">Schedule fields only: course, section, meeting times, room. Grades are never included.</p>
+      <p class="agp-note" data-role="schedule-note" aria-live="polite"></p>
+    </section>
   </div>
 `;
 
@@ -140,6 +153,8 @@ export function createPanel({ doc, handlers }) {
     exclusions: Array.from(element.querySelectorAll('[data-role="exclusion"]')),
     filter: element.querySelector('[data-role="filter"]'),
     highlightCount: element.querySelector('[data-role="highlight-count"]'),
+    scheduleStatus: element.querySelector('[data-role="schedule-status"]'),
+    scheduleNote: element.querySelector('[data-role="schedule-note"]'),
     close: element.querySelector('[data-action="close"]'),
   };
 
@@ -221,6 +236,12 @@ export function createPanel({ doc, handlers }) {
     .querySelector('[data-action="export-json"]')
     .addEventListener('click', () => handlers.onExport('json'));
 
+  for (const action of ['refresh', 'copy', 'download', 'roomtba']) {
+    element
+      .querySelector(`[data-action="schedule-${action}"]`)
+      .addEventListener('click', () => handlers.onSchedule(action));
+  }
+
   doc.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !element.hidden) close();
   });
@@ -253,6 +274,26 @@ export function createPanel({ doc, handlers }) {
       } else {
         refs.highlightCount.textContent = 'No matching rows.';
       }
+    },
+    setSchedule({ status, classes }) {
+      const note = refs.scheduleNote;
+      if (status === 'loading') {
+        refs.scheduleStatus.textContent = 'Reading your enrollment from ALAB SMS…';
+      } else if (status === 'ready') {
+        refs.scheduleStatus.textContent = `${classes} ${classes === 1 ? 'class' : 'classes'} found for the current term.`;
+      } else if (status === 'not-logged-in') {
+        refs.scheduleStatus.textContent =
+          'Not logged in to ALAB SMS. Sign in on the portal, then refresh.';
+      } else if (status === 'empty') {
+        refs.scheduleStatus.textContent = 'No enrolled subjects found for the current term.';
+      } else {
+        refs.scheduleStatus.textContent =
+          'Could not read the schedule from ALAB SMS. Try refreshing.';
+      }
+      if (note) note.textContent = '';
+    },
+    setScheduleNote(message) {
+      refs.scheduleNote.textContent = message || '';
     },
   };
 }
